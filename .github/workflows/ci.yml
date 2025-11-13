@@ -37,13 +37,11 @@ jobs:
         python-version: ${{ matrix.python-version }}
     - name: Install dependencies
       run: uv sync --dev --python python
-    - name: Install package in development mode
-      run: uv pip install -e .
     - name: Run tests with pytest
-      run: uv run pytest test_subprocess.py -v
+      run: uv run --python python pytest test_subprocess.py -v
     - name: Run tests with unittest (fallback)
       if: failure()
-      run: uv run python -m unittest test_subprocess -v
+      run: uv run --python python python -m unittest test_subprocess -v
 
   lint:
     runs-on: ubuntu-latest
