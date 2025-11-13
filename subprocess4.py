@@ -44,6 +44,11 @@ else:
 # Mimic the subprocess module's internal platform check
 _IS_POSIX = os.name == "posix"
 
+if hasattr(subprocess, "_del_safe"):
+    if subprocess._del_safe.waitpid is not None and hasattr(os, "wait4"):
+        subprocess._del_safe.wait4 = os.wait4
+    else:
+        subprocess._del_safe.wait4 = None
 
 class CalledProcessError(subprocess.CalledProcessError):
     """Raised when run() is called with check=True and the process
