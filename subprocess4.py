@@ -45,7 +45,6 @@ else:
 _IS_POSIX = os.name == "posix"
 
 if _IS_POSIX and hasattr(os, "wait4"):
-    assert hasattr(subprocess, "_del_safe")
     if subprocess._del_safe.waitpid is not None:
         subprocess._del_safe.wait4 = os.wait4
 
