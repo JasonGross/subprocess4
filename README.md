@@ -10,7 +10,7 @@ pip install subprocess4
 
 ## Requirements
 
-- Python 3.7+
+- Python 3.8+
 - POSIX system with `os.wait4()` support (Linux, macOS, BSD, etc.)
 
 On non-POSIX systems (like Windows), the module will issue a warning but continue to work without resource usage information.
