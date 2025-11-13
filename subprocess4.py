@@ -44,6 +44,11 @@ else:
 # Mimic the subprocess module's internal platform check
 _IS_POSIX = os.name == "posix"
 
+if IS_POSIX and hasattr(os, "wait4"):
+    assert hasattr(subprocess, "_del_safe")
+    if subprocess._del_safe.waitpid is not None:
+        subprocess._del_safe.wait4 = os.wait4
+
 
 class CalledProcessError(subprocess.CalledProcessError):
     """Raised when run() is called with check=True and the process
@@ -144,8 +149,9 @@ class CompletedProcess(subprocess.CompletedProcess):
             )
 
 
-def run(*popenargs,
-        input=None, capture_output=False, timeout=None, check=False, **kwargs):
+def run(
+    *popenargs, input=None, capture_output=False, timeout=None, check=False, **kwargs
+):
     """Run command with arguments and return a CompletedProcess4 instance.
 
     The returned instance will have attributes args, returncode, stdout and
@@ -175,16 +181,17 @@ def run(*popenargs,
     The other arguments are the same as for the Popen constructor.
     """
     if input is not None:
-        if kwargs.get('stdin') is not None:
-            raise ValueError('stdin and input arguments may not both be used.')
-        kwargs['stdin'] = PIPE
+        if kwargs.get("stdin") is not None:
+            raise ValueError("stdin and input arguments may not both be used.")
+        kwargs["stdin"] = PIPE
 
     if capture_output:
-        if kwargs.get('stdout') is not None or kwargs.get('stderr') is not None:
-            raise ValueError('stdout and stderr arguments may not be used '
-                             'with capture_output.')
-        kwargs['stdout'] = PIPE
-        kwargs['stderr'] = PIPE
+        if kwargs.get("stdout") is not None or kwargs.get("stderr") is not None:
+            raise ValueError(
+                "stdout and stderr arguments may not be used with capture_output."
+            )
+        kwargs["stdout"] = PIPE
+        kwargs["stderr"] = PIPE
 
     with Popen(*popenargs, **kwargs) as process:
         try:
@@ -209,8 +216,9 @@ def run(*popenargs,
             raise
         retcode = process.poll()
         if check and retcode:
-            raise CalledProcessError(retcode, process.args,
-                                     output=stdout, stderr=stderr, rusage=rusage)
+            raise CalledProcessError(
+                retcode, process.args, output=stdout, stderr=stderr, rusage=rusage
+            )
     return CompletedProcess(process.args, retcode, stdout, stderr, rusage)
 
 
@@ -325,6 +333,55 @@ class Popen(subprocess.Popen):
             stdout, stderr = self.communicate(input=input, timeout=timeout)
             return (stdout, stderr, self._rusage)
         except subprocess.TimeoutExpired as exc:
-            raise TimeoutExpired(self.args, timeout, exc.stdout, exc.stderr, self._rusage) from exc
+            raise TimeoutExpired(
+                self.args, timeout, exc.stdout, exc.stderr, self._rusage
+            ) from exc
         except subprocess.CalledProcessError as exc:
-            raise CalledProcessError(exc.returncode, self.args, exc.stdout, exc.stderr, self._rusage) from exc
+            raise CalledProcessError(
+                exc.returncode, self.args, exc.stdout, exc.stderr, self._rusage
+            ) from exc
+
+    if hasattr(subprocess, "_del_safe"):
+
+        def _internal_poll(self, _deadstate=None, _del_safe=subprocess._del_safe):
+            """Check if child process has terminated.  Returns returncode
+            attribute.
+
+            This method is called by __del__, so it cannot reference anything
+            outside of the local scope (nor can any methods it calls).
+
+            """
+            if self.returncode is None:
+                if not self._waitpid_lock.acquire(False):
+                    # Something else is busy calling waitpid.  Don't allow two
+                    # at once.  We know nothing yet.
+                    return None
+                try:
+                    if self.returncode is not None:
+                        return self.returncode  # Another thread waited.
+                    if hasattr(_del_safe, "wait4") and _del_safe.wait4 is not None:
+                        try:
+                            pid, sts, rusage = _del_safe.wait4(
+                                self.pid, _del_safe.WNOHANG
+                            )
+                        except OSError as e:
+                            if _deadstate is not None:
+                                self.returncode = _deadstate
+                            elif e.errno == _del_safe.ECHILD:
+                                # This happens if SIGCLD is set to be ignored or
+                                # waiting for child processes has otherwise been
+                                # disabled for our process.  This child is dead, we
+                                # can't get the status.
+                                self.returncode = 0
+                            return self.returncode
+                        if pid == self.pid:
+                            self._rusage = rusage
+                            self._handle_exitstatus(sts)
+                    else:
+                        # Fallback to waitpid if wait4 is not available (though we already checked in __init__).
+                        pid, sts = _del_safe.waitpid(self.pid, _del_safe.WNOHANG)
+                        if pid == self.pid:
+                            self._handle_exitstatus(sts)
+                finally:
+                    self._waitpid_lock.release()
+            return self.returncode
