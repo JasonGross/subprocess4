@@ -44,7 +44,7 @@ else:
 # Mimic the subprocess module's internal platform check
 _IS_POSIX = os.name == "posix"
 
-if IS_POSIX and hasattr(os, "wait4"):
+if _IS_POSIX and hasattr(os, "wait4"):
     assert hasattr(subprocess, "_del_safe")
     if subprocess._del_safe.waitpid is not None:
         subprocess._del_safe.wait4 = os.wait4
