@@ -1,0 +1,303 @@
+name: Publish Python 🐍 distribution 📦 to PyPI or TestPyPI
+
+on:
+  release:
+    types: [published] # Only publish to pip when we formally publish a release
+  # For more on how to formally release on Github, read https://help.github.com/en/articles/creating-releases
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-distribution:
+    name: Build distribution 📦
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v5
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: "3.x"
+    - name: Install pypa/build
+      run: >-
+        python3 -m
+        pip install
+        build
+        wheel
+        twine
+        --user
+    - name: Bump package version with local extension
+      run: etc/ci/bump-package-version.sh ".dev$(date +%s)"
+      if: ${{ ! ( startsWith(github.ref, 'refs/tags/') && github.event_name == 'release' ) }}
+    - name: Build a binary wheel and a source tarball
+      run: make dist PYTHON=python3
+    - name: Store the distribution packages
+      uses: actions/upload-artifact@v5
+      with:
+        name: python-package-distributions
+        path: dist/
+
+  build-standalone:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    name: Build standalone ⛏️ ${{ matrix.os }} ${{ (matrix.os == 'windows-latest' && '🪟') || (matrix.os == 'macos-latest' && '🍎') || (matrix.os == 'ubuntu-latest' && '🐧') }}
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - uses: actions/checkout@v5
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: "3.x"
+    - name: Install pyinstaller
+      run: >-
+        python3 -m
+        pip install
+        pyinstaller
+    - name: Build a standalone executable
+      run: make standalone
+    - name: Store the standalone packages
+      uses: actions/upload-artifact@v5
+      with:
+        name: python-standalone-${{ matrix.os }}
+        path: dist/
+
+  collect-standalone:
+    name: Collect standalone ⛏️
+    runs-on: ubuntu-latest
+    needs:
+    - build-standalone
+
+    steps:
+    - uses: actions/checkout@v5
+    - name: Download standalone ⛏️ Ubuntu
+      uses: actions/download-artifact@v6
+      with:
+        name: python-standalone-ubuntu-latest
+        path: dist-ubuntu/
+    - name: Download standalone ⛏️ Windows
+      uses: actions/download-artifact@v6
+      with:
+        name: python-standalone-windows-latest
+        path: dist-windows/
+    - name: Download standalone ⛏️ MacOS
+      uses: actions/download-artifact@v6
+      with:
+        name: python-standalone-macos-latest
+        path: dist-macos/
+    - run: |
+        mkdir -p dist
+        for os in ubuntu windows macos; do
+            pushd "dist-$os"
+            find .
+            rm -rf */_internal
+            for d in */; do
+                pushd "$d"
+                for i in *; do
+                    echo "$i"
+                    chmod +x "$i"
+                    if [[ $i == *".exe" ]]; then
+                        # If string ends with .exe, insert -os before .exe
+                        mv "$i" "../../dist/${i/.exe/-${os}.exe}"
+                    else
+                        # Otherwise, just append -os
+                        mv "$i" "../../dist/${i}-${os}"
+                    fi
+                done
+                popd
+            done
+            popd
+        done
+        find dist/
+        ls -la dist/
+        tar -czvf standalone.tar.gz dist/
+    - name: Store the standalone ⛏️ packages
+      uses: actions/upload-artifact@v5
+      with:
+        name: python-standalone
+        path: standalone.tar.gz
+
+  publish-to-pypi:
+    name: >-
+      PiPI: Publish Python 🐍 distribution 📦
+    if: ${{ startsWith(github.ref, 'refs/tags/') && github.event_name == 'release' }} # only publish to PyPI on tag pushes
+    needs:
+    - build-distribution
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/coq-tools
+    permissions:
+      id-token: write  # IMPORTANT: mandatory for trusted publishing
+
+    steps:
+    - name: Download all the dists
+      uses: actions/download-artifact@v6
+      with:
+        name: python-package-distributions
+        path: dist/
+    - name: Publish distribution 📦 to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+
+  publish-to-testpypi:
+    name: >-
+      TestPyPI: Publish Python 🐍 distribution 📦
+    if: ${{ ( ! ( startsWith(github.ref, 'refs/tags/') && github.event_name == 'release' ) ) && ( ! ( github.event.pull_request.head.repo.fork ) ) }} # only publish to TestPyPI on non-tag pushes to non-forks (forks don't have permission)
+    needs:
+    - build-distribution
+    runs-on: ubuntu-latest
+
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/coq-tools
+
+    permissions:
+      id-token: write  # IMPORTANT: mandatory for trusted publishing
+
+    steps:
+    - name: Download all the dists
+      uses: actions/download-artifact@v6
+      with:
+        name: python-package-distributions
+        path: dist/
+    - name: Publish distribution 📦 to TestPyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        repository-url: https://test.pypi.org/legacy/
+
+  check-publish:
+    runs-on: ubuntu-latest
+    needs:
+    - publish-to-testpypi
+    - collect-standalone
+    if: ${{ always() && ! ( startsWith(github.ref, 'refs/tags/') && github.event_name == 'release' ) }}
+    steps:
+    - run: echo 'The triggering workflow (publish-to-testpypi) passed'
+      if: ${{ needs.publish-to-testpypi.result == 'success' }}
+    - run: echo 'The triggering workflow (publish-to-testpypi) failed' && false
+      if: ${{ needs.publish-to-testpypi.result != 'success' }}
+    - run: echo 'The triggering workflow (collect-standalone) passed'
+      if: ${{ needs.collect-standalone.result == 'success' }}
+    - run: echo 'The triggering workflow (collect-standalone) failed' && false
+      if: ${{ needs.collect-standalone.result != 'success' }}
+
+
+  github-release:
+    name: >-
+      Sign the Python 🐍 distribution 📦 with Sigstore
+      and upload them to GitHub Release
+    if: ${{ startsWith(github.ref, 'refs/tags/') && github.event_name == 'release' }} # only publish to PyPI on tag pushes
+    needs:
+    - publish-to-pypi
+    - collect-standalone
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write  # IMPORTANT: mandatory for making GitHub Releases
+      id-token: write  # IMPORTANT: mandatory for sigstore
+
+    steps:
+    - name: Download all the dists
+      uses: actions/download-artifact@v6
+      with:
+        name: python-package-distributions
+        path: dist/
+    - name: Download standalone
+      uses: actions/download-artifact@v6
+      with:
+        name: python-standalone
+        path: .
+    - name: Unpack standalone
+      run: tar -xzvf standalone.tar.gz
+    - run: find dist
+    - run: ls -la dist
+    - name: Sign the dists with Sigstore
+      uses: sigstore/gh-action-sigstore-python@v3.1.0
+      with:
+        inputs: >-
+          ./dist/*
+
+  # TODO: Fix permissions with https://github.com/orgs/community/discussions/25305#discussioncomment-8256560
+  bump-package-version:
+    name: Bump package version
+    runs-on: ubuntu-latest
+    environment:
+      name: release
+    if: ${{ startsWith(github.ref, 'refs/tags/') && github.event_name == 'release' }} # only publish to PyPI on tag pushes
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: read
+
+    steps:
+    - uses: actions/create-github-app-token@v2
+      id: app-token
+      with:
+        app-id: ${{ vars.VERSION_BUMPER_APPID }}
+        private-key: ${{ secrets.VERSION_BUMPER_SECRET }}
+    - uses: actions/checkout@v5
+      with:
+        fetch-depth: 0
+        token: ${{ steps.app-token.outputs.token }}
+    - name: Bump Package version
+      id: bumpPackageViaPush
+      run: |
+        etc/ci/bump-package-version.sh
+        # remote_repo="https://${GITHUB_ACTOR}:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+        git config http.sslVerify false
+        git config user.name "Automated Publisher"
+        git config user.email "actions@users.noreply.github.com"
+        # git remote add publisher "${remote_repo}"
+        git remote update
+        git show-ref # useful for debugging
+        git branch --verbose
+
+        git checkout -b temp
+        git branch -D master || true
+        git checkout -b master origin/master
+        git add pyproject.toml
+        timestamp=$(date -u)
+        git commit -m "Automated Package Version Bump: ${timestamp} ${GITHUB_SHA}"
+        # TODO: Fix permissions with https://github.com/orgs/community/discussions/25305#discussioncomment-8256560
+        if git push origin master; then
+          echo "Push successful"
+        else
+          # If the push fails, get the short SHA of the latest commit
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          # Create and push to a new branch
+          git checkout -b package-version-bump-$SHORT_SHA
+          git push --set-upstream origin package-version-bump-$SHORT_SHA
+          FAILURE_MESSAGE="PR creation failed"
+          # Locate workflow file, remove the Git ref at the end
+          WORKFLOW_PATH="${GITHUB_WORKFLOW_REF%@*}"
+          # Split the string to insert the blob/SHA part correctly
+          REPO_PATH="${WORKFLOW_PATH%/.github/*}"  # This extracts 'everything before /.github/'
+          WORKFLOW_FILE_PATH=".github/${WORKFLOW_PATH#*.github/}"  # This extracts '.github/...'
+          WORKFLOW_URL="https://github.com/${REPO_PATH}/blob/${{ github.sha }}/${WORKFLOW_FILE_PATH}"
+          # Attempt to create a pull request via gh CLI, capture output even if it fails
+          PR_OUTPUT="$(gh pr create --title "Package Version Bump" \
+                                  --body "This PR is auto-generated by [GitHub Actions](${WORKFLOW_URL})." \
+                                  --base master --head package-version-bump-$SHORT_SHA \
+                                  --label "automated pr" \
+                                  --repo ${{ github.repository }} \
+                        || echo "${FAILURE_MESSAGE}")"
+          echo "PR output: $PR_OUTPUT"
+          # Check if PR creation was successful and proceed with auto-merge
+          if [[ "$PR_OUTPUT" != *"$FAILURE_MESSAGE" ]]; then
+            if ! gh pr merge --admin --squash --delete-branch $PR_OUTPUT; then
+              echo "Immediate merge with --admin failed, attempting auto-merge without --admin"
+              gh pr merge --auto --squash --delete-branch $PR_OUTPUT
+            fi
+          else
+            echo "Skipping auto-merge as PR creation failed"
+            exit 1
+          fi
+        fi
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

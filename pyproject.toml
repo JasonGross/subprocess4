@@ -1,0 +1,13 @@
+[project]
+name = "subprocess4"
+version = "0.1.0"
+authors = [{ name = "Jason Gross", email = "jgross@mit.edu" }]
+description = "Python subprocess wrapper using os.wait4 to get resource usage"
+readme = "README.md"
+requires-python = ">=3.6"
+dependencies = []
+
+
+[project.urls]
+"Homepage" = "https://github.com/JasonGross/subprocess4"
+"Bug Tracker" = "https://github.com/JasonGross/subprocess4/issues"
