@@ -67,7 +67,7 @@ class BaseTestCase(unittest.TestCase):
 
     def setUp(self):
         # Clean up any existing processes
-        if hasattr(subprocess, "_active"):
+        if hasattr(subprocess, "_active") and subprocess._active is not None:
             for inst in list(subprocess._active):
                 try:
                     inst.wait(timeout=0.1)
