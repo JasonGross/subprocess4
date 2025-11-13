@@ -8,7 +8,7 @@ version = "0.1.1"
 authors = [{ name = "Jason Gross", email = "jgross@mit.edu" }]
 description = "Python subprocess wrapper using os.wait4 to get resource usage"
 readme = "README.md"
-requires-python = ">=3.7"
+requires-python = ">=3.6"
 dependencies = []
 
 [dependency-groups]
