@@ -44,10 +44,6 @@ else:
 # Mimic the subprocess module's internal platform check
 _IS_POSIX = os.name == "posix"
 
-if _IS_POSIX and hasattr(os, "wait4"):
-    if subprocess._del_safe.waitpid is not None:
-        subprocess._del_safe.wait4 = os.wait4
-
 
 class CalledProcessError(subprocess.CalledProcessError):
     """Raised when run() is called with check=True and the process
@@ -340,9 +336,9 @@ class Popen(subprocess.Popen):
                 exc.returncode, self.args, exc.stdout, exc.stderr, self._rusage
             ) from exc
 
-    if hasattr(subprocess, "_del_safe"):
+    if _IS_POSIX and hasattr(os, "wait4"):
 
-        def _internal_poll(self, _deadstate=None, _del_safe=subprocess._del_safe):
+        def _internal_poll(self, _deadstate=None, _del_safe=os):
             """Check if child process has terminated.  Returns returncode
             attribute.
 
