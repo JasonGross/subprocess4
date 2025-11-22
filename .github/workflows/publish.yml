@@ -26,7 +26,11 @@ jobs:
       with:
         python-version: "3.x"
     - name: Bump package version with local extension
-      run: etc/ci/bump-package-version.sh ".dev$(date +%s)"
+      run: |
+        current_version="$(uv version | cut -d' ' -f2)"
+        new_version="${current_version}.dev$(date +%s)"
+        uv version "$new_version"
+        git ls-files "*.py" | xargs sed -i "s/^__version__ = .*/__version__ = \"$new_version\"/g"
       if: ${{ ! ( startsWith(github.ref, 'refs/tags/') && github.event_name == 'release' ) }}
     - name: Build a binary wheel and a source tarball
       run: uv build
@@ -35,6 +39,18 @@ jobs:
       with:
         name: python-package-distributions
         path: dist/
+    - name: tar modified files
+      run: |
+        if git diff --name-only | grep -q .; then
+          git diff --name-only | xargs tar -czf modified-files.tar.gz
+        else
+          tar -czf modified-files.tar.gz --files-from /dev/null
+        fi
+    - name: Store the modified files
+      uses: actions/upload-artifact@v5
+      with:
+        name: modified-files
+        path: modified-files.tar.gz
 
   publish-to-pypi:
     name: >-
@@ -83,12 +99,19 @@ jobs:
       with:
         name: python-package-distributions
         path: dist/
+    - name: Download all the file modifications
+      uses: actions/download-artifact@v6
+      with:
+        name: modified-files
+    - name: Extract the modified files
+      run: tar -xzf modified-files.tar.gz
+    - run: git --no-pager diff
     - name: Install uv
       uses: astral-sh/setup-uv@v7
       with:
         version: "latest"
     - name: Publish distribution 📦 to TestPyPI
-      run: uv publish --publish-url https://test.pypi.org/legacy/
+      run: uv publish --index testpypi
 
   check-publish:
     runs-on: ubuntu-latest
@@ -153,8 +176,13 @@ jobs:
     - name: Bump Package version
       id: bumpPackageViaPush
       run: |
-        etc/ci/bump-package-version.sh
-        # remote_repo="https://${GITHUB_ACTOR}:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+        new_version="$(uv version --bump patch --dry-run | grep -o '=>.*' | sed 's/=> *//g')"
+        if [ -z "$new_version" ]; then
+          uv version --bump patch --dry-run
+          exit 1
+        fi
+        uv version --bump patch
+        git ls-files "*.py" | xargs sed -i "s/^__version__ = .*/__version__ = \"$new_version\"/g"
         git config http.sslVerify false
         git config user.name "Automated Publisher"
         git config user.email "actions@users.noreply.github.com"
